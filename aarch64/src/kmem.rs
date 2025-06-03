@@ -1,5 +1,5 @@
 use crate::param::KZERO;
-use port::mem::{PhysAddr, PhysRange};
+use port::mem::{PhysAddr, PhysRange, VirtAddr};
 
 // These map to definitions in kernel.ld
 unsafe extern "C" {
@@ -70,27 +70,27 @@ fn eearly_pagetables_addr() -> usize {
 }
 
 pub fn boottext_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(base_addr())..from_virt_to_physaddr(eboottext_addr()))
+    PhysRange(from_virt_to_physaddr(VirtAddr::new(base_addr()))..from_virt_to_physaddr(VirtAddr::new(eboottext_addr())))
 }
 
 pub fn text_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(text_addr())..from_virt_to_physaddr(etext_addr()))
+    PhysRange(from_virt_to_physaddr(VirtAddr::new(text_addr()))..from_virt_to_physaddr(VirtAddr::new(etext_addr())))
 }
 
 pub fn rodata_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(rodata_addr())..from_virt_to_physaddr(erodata_addr()))
+    PhysRange(from_virt_to_physaddr(VirtAddr::new(rodata_addr()))..from_virt_to_physaddr(VirtAddr::new(erodata_addr())))
 }
 
 pub fn data_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(data_addr())..from_virt_to_physaddr(edata_addr()))
+    PhysRange(from_virt_to_physaddr(VirtAddr::new(data_addr()))..from_virt_to_physaddr(VirtAddr::new(edata_addr())))
 }
 
 pub fn bss_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(bss_addr())..from_virt_to_physaddr(ebss_addr()))
+    PhysRange(from_virt_to_physaddr(VirtAddr::new(bss_addr()))..from_virt_to_physaddr(VirtAddr::new(ebss_addr())))
 }
 
 pub fn total_kernel_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(base_addr())..from_virt_to_physaddr(end_addr()))
+    PhysRange(from_virt_to_physaddr(VirtAddr::new(base_addr()))..from_virt_to_physaddr(VirtAddr::new(end_addr())))
 }
 
 /// Transform the physical address to a virtual address, under the assumption that
@@ -101,20 +101,20 @@ pub const fn physaddr_as_ptr_mut_offset_from_kzero<T>(pa: PhysAddr) -> *mut T {
 
 /// Given a virtual address, return the physical address.  Makes a massive assumption
 /// that the code is mapped offset to KZERO, so should be used with extreme care.
-pub fn from_virt_to_physaddr(va: usize) -> PhysAddr {
-    debug_assert!(va >= KZERO, "from_virt_to_physaddr: va {} must be >= KZERO ({})", va, KZERO);
-    PhysAddr::new((va - KZERO) as u64)
+pub fn from_virt_to_physaddr(va: VirtAddr) -> PhysAddr {
+    debug_assert!(va.addr() >= KZERO, "from_virt_to_physaddr: va {:?} must be >= KZERO ({})", va, KZERO);
+    PhysAddr::new((va.addr() - KZERO) as u64)
 }
 
 /// Given an address, return the physical address.  Makes a massive assumption
 /// that the code is mapped offset to KZERO, so should be used with extreme care.
 pub fn from_ptr_to_physaddr_offset_from_kzero<T>(a: *const T) -> PhysAddr {
-    from_virt_to_physaddr(a.addr())
+    from_virt_to_physaddr(VirtAddr::new(a.addr()))
 }
 
 pub fn early_pages_range() -> PhysRange {
     PhysRange::new(
-        from_virt_to_physaddr(early_pagetables_addr()),
-        from_virt_to_physaddr(eearly_pagetables_addr()),
+        from_virt_to_physaddr(VirtAddr::new(early_pagetables_addr())),
+        from_virt_to_physaddr(VirtAddr::new(eearly_pagetables_addr())),
     )
 }

@@ -30,7 +30,7 @@ use core::ptr::{self, null_mut};
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
 use param::KZERO;
 use port::fdt::DeviceTree;
-use port::mem::PhysRange;
+use port::mem::{PhysRange, VirtAddr};
 use port::println;
 use vm::{Entry, RootPageTable, RootPageTableType, VaMapping};
 
@@ -116,7 +116,7 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
-        let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
+        let dtb_range = PhysRange::with_len(from_virt_to_physaddr(VirtAddr::new(dtb_va)).addr(), dt.size());
         vm::init_kernel_page_tables(&dt, &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE), dtb_range);
         vm::switch(&*ptr::addr_of!(KERNEL_PAGETABLE), RootPageTableType::Kernel);
 
@@ -181,7 +181,7 @@ fn test_sysexit() {
             page_table,
             "usertext",
             Entry::rw_user_text(),
-            VaMapping::Addr(0x1000),
+            VaMapping::Addr(VirtAddr::new(0x1000)),
             RootPageTableType::User,
         )
         .expect("couldn't allocate user_text");
@@ -201,7 +201,7 @@ fn test_sysexit() {
         page_table,
         "userstack",
         Entry::rw_user_data(),
-        VaMapping::Addr(KZERO - 0x1000),
+            VaMapping::Addr(VirtAddr::new(KZERO - 0x1000)),
         RootPageTableType::User,
     )
     .expect("couldn't allocate user_stack");

@@ -20,7 +20,7 @@ pub fn delay(count: u32) {
 /// Panics if offset is outside any range specified by reg.len.
 pub fn write_reg(range: &VirtRange, offset: usize, val: u32) {
     let dst = range.offset_addr(offset).expect("offset outside bounds");
-    unsafe { write_volatile(dst as *mut u32, val) }
+    unsafe { write_volatile(dst.addr() as *mut u32, val) }
 }
 
 /// Write val|old into the reg RegBlock at offset from reg.addr,
@@ -30,8 +30,8 @@ pub fn write_reg(range: &VirtRange, offset: usize, val: u32) {
 pub fn write_or_reg(range: &VirtRange, offset: usize, val: u32) {
     let dst = range.offset_addr(offset).expect("offset outside bounds");
     unsafe {
-        let old = read_volatile(dst as *const u32);
-        write_volatile(dst as *mut u32, val | old)
+        let old = read_volatile(dst.addr() as *const u32);
+        write_volatile(dst.addr() as *mut u32, val | old)
     }
 }
 
@@ -39,5 +39,5 @@ pub fn write_or_reg(range: &VirtRange, offset: usize, val: u32) {
 /// Panics if offset is outside any range specified by reg.len.
 pub fn read_reg(range: &VirtRange, offset: usize) -> u32 {
     let src = range.offset_addr(offset).expect("offset outside bounds");
-    unsafe { read_volatile(src as *const u32) }
+    unsafe { read_volatile(src.addr() as *const u32) }
 }
