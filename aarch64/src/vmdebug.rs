@@ -1,4 +1,4 @@
-///! Debug tools for VM code
+//! Debug tools for VM code
 
 #[cfg(not(test))]
 use port::println;
@@ -51,14 +51,12 @@ impl PteIndices {
             Some(i)
         } else if let Some(i) = self.l1 {
             Some(i)
-        } else if let Some(i) = self.l0 {
-            Some(i)
         } else {
-            None
+            self.l0
         }
     }
 
-    fn to_va(&self) -> usize {
+    fn to_va(self) -> usize {
         let mut va = match self.pgtype {
             RootPageTableType::Kernel => 0xffff_0000_0000_0000,
             RootPageTableType::User => 0x0000_0000_0000_0000,

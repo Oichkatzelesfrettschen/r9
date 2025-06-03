@@ -610,6 +610,12 @@ impl ExpandStep {
         if self.profile == Profile::Release {
             cmd.arg("--release");
         }
+
+        // Add arguments for clippy itself (e.g., -D warnings)
+        cmd.arg("--");
+        cmd.arg("-D");
+        cmd.arg("warnings");
+
         if self.verbose {
             println!("Executing {cmd:?}");
         }

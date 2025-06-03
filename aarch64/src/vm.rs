@@ -18,7 +18,7 @@ use core::ptr::write_volatile;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
     fdt::DeviceTree,
-    mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange},
+    mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange, VirtAddr},
     pagealloc::PageAllocError,
 };
 
@@ -257,20 +257,21 @@ impl Level {
     }
 }
 
-pub fn va_index(va: usize, level: Level) -> usize {
+pub fn va_index(va: VirtAddr, level: Level) -> usize {
+    let va_val = va.addr();
     match level {
-        Level::Level0 => (va >> 39) & 0x1ff,
-        Level::Level1 => (va >> 30) & 0x1ff,
-        Level::Level2 => (va >> 21) & 0x1ff,
-        Level::Level3 => (va >> 12) & 0x1ff,
+        Level::Level0 => (va_val >> 39) & 0x1ff,
+        Level::Level1 => (va_val >> 30) & 0x1ff,
+        Level::Level2 => (va_val >> 21) & 0x1ff,
+        Level::Level3 => (va_val >> 12) & 0x1ff,
     }
 }
 
 /// Return the virtual address for the page table at level `level` for the
 /// given virtual address, assuming the use of recursive page tables.
-fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> usize {
+fn recursive_table_addr(pgtype: RootPageTableType, va: VirtAddr, level: Level) -> VirtAddr {
     let indices_mask = 0x0000_ffff_ffff_f000;
-    let indices = va & indices_mask;
+    let indices = va.addr() & indices_mask;
     let shift = match level {
         Level::Level0 => 36,
         Level::Level1 => 27,
@@ -287,7 +288,7 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
         RootPageTableType::Kernel => 0xffff_0000_0000_0000,
         RootPageTableType::User => 0x0000_0000_0000_0000,
     };
-    msbits | recursive_indices | ((indices >> shift) & indices_mask)
+    VirtAddr::new(msbits | recursive_indices | ((indices >> shift) & indices_mask))
 }
 
 #[derive(Debug)]
@@ -314,7 +315,7 @@ impl Table {
     /// Return a mutable entry from the table based on the virtual address and
     /// the level.  (It uses the level to extract the index from the correct
     /// part of the virtual address).
-    pub fn entry_mut(&mut self, level: Level, va: usize) -> Result<&mut Entry, PageTableError> {
+    pub fn entry_mut(&mut self, level: Level, va: VirtAddr) -> Result<&mut Entry, PageTableError> {
         let idx = va_index(va, level);
         Ok(&mut self.entries[idx])
     }
@@ -324,7 +325,7 @@ impl Table {
         &mut self,
         pgtype: RootPageTableType,
         level: Level,
-        va: usize,
+        va: VirtAddr,
     ) -> Result<&mut Table, PageTableError> {
         // Try to get a valid page table entry.  If it doesn't exist, create it.
         let index = va_index(va, level);
@@ -347,18 +348,16 @@ impl Table {
 
             // Clear out the new page
             let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
-            let page = unsafe { &mut *(recursive_page_addr as *mut PhysPage4K) };
+            let page = unsafe { &mut *(recursive_page_addr.addr() as *mut PhysPage4K) };
             page.clear();
-        } else {
-            if !entry.is_table(level) {
+            } else if !entry.is_table(level) {
                 println!("error:vm:next_mut:entry is not a valid table entry:{entry:?} {level:?}");
                 return Err(PageTableError::EntryIsNotTable);
-            }
         }
 
         // Return the address of the next table as a recursive address
         let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
-        Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
+        Ok(unsafe { &mut *(recursive_page_addr.addr() as *mut Table) })
     }
 }
 
@@ -369,15 +368,15 @@ impl fmt::Debug for Table {
 }
 
 pub enum VaMapping {
-    Addr(usize),   // Map to exact virtual address
+    Addr(VirtAddr),   // Map to exact virtual address
     Offset(usize), // Map to offset of physical address
 }
 
 impl VaMapping {
-    fn map(&self, pa: PhysAddr) -> usize {
+    fn map(&self, pa: PhysAddr) -> VirtAddr {
         match self {
             Self::Addr(va) => *va,
-            Self::Offset(offset) => (pa.addr() as usize).wrapping_add(*offset),
+            Self::Offset(offset) => VirtAddr::new((pa.addr() as usize).wrapping_add(*offset)),
         }
     }
 }
@@ -396,7 +395,7 @@ impl RootPageTable {
     fn map_to(
         &mut self,
         entry: Entry,
-        va: usize,
+        va: VirtAddr,
         page_size: PageSize,
         root_page_table: &mut RootPageTable,
         pgtype: RootPageTableType,
@@ -435,7 +434,7 @@ impl RootPageTable {
             Ok(e) => e,
             Err(err) => {
                 println!(
-                    "error:vm:map_to:couldn't find page table entry. va:{:#x} err:{:?}",
+                    "error:vm:map_to:couldn't find page table entry. va:{:?} err:{:?}",
                     va, err
                 );
                 return Err(err);
@@ -483,20 +482,22 @@ impl RootPageTable {
 
         let root_page_table = root_page_table(pgtype);
 
-        let mut startva = None;
-        let mut endva = 0;
-        let mut currva = 0;
+        let mut mapped_start_va: Option<VirtAddr> = None;
+        // Initialize with a dummy value, it will be updated before being returned.
+        let mut mapped_end_va: VirtAddr = VirtAddr::new(0);
+
         for pa in range.step_by_rounded(page_size.size()) {
-            if startva.is_none() {
-                currva = va_mapping.map(pa);
-                startva = Some(currva);
-            } else {
-                currva += page_size.size();
+            let current_target_va = va_mapping.map(pa);
+            if mapped_start_va.is_none() {
+                mapped_start_va = Some(current_target_va);
             }
-            endva = currva + page_size.size();
-            self.map_to(entry.with_phys_addr(pa), currva, page_size, root_page_table, pgtype)?;
+            mapped_end_va = current_target_va + page_size.size();
+            self.map_to(entry.with_phys_addr(pa), current_target_va, page_size, root_page_table, pgtype)?;
         }
-        startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
+
+        mapped_start_va
+            .map(|start_va| Ok((start_va.addr(), mapped_end_va.addr())))
+            .unwrap_or(Err(PageTableError::PhysRangeIsZero))
     }
 }
 
@@ -561,7 +562,7 @@ pub unsafe fn init_kernel_page_tables(
             .map_phys_range(
                 name,
                 range,
-                VaMapping::Offset(KZERO),
+                VaMapping::Offset(KZERO), // KZERO is usize, VirtAddr::new(KZERO) might be better if used as Addr
                 *flags,
                 *page_size,
                 RootPageTableType::Kernel,
@@ -682,24 +683,25 @@ mod tests {
 
     #[test]
     fn can_break_down_va() {
-        assert_eq!(va_indices(0xffff8000049fd000), (256, 0, 36, 509));
+        assert_eq!(va_indices(VirtAddr::new(0xffff8000049fd000)), (256, 0, 36, 509));
     }
 
     #[test]
     fn test_to_use_for_debugging_vaddrs() {
-        // assert_eq!(va_indices(0xffffffffffe00000), (256, 0, 36, 509));
-        // assert_eq!(va_indices(0xfffffffffff00000), (256, 0, 36, 509));
-        // assert_eq!(va_indices(0xffffffffe0000000), (256, 0, 36, 509));
-        // assert_eq!(va_indices(0x1000), (0, 0, 0, 1));
+        // assert_eq!(va_indices(VirtAddr::new(0xffffffffffe00000)), (256, 0, 36, 509));
+        // assert_eq!(va_indices(VirtAddr::new(0xfffffffffff00000)), (256, 0, 36, 509));
+        // assert_eq!(va_indices(VirtAddr::new(0xffffffffe0000000)), (256, 0, 36, 509));
+        // assert_eq!(va_indices(VirtAddr::new(0x1000)), (0, 0, 0, 1));
     }
 
     #[test]
     fn test_recursive_table_addr() {
-        assert_eq!(va_indices(0xffff800008000000), (256, 0, 64, 0));
+        let base_va = VirtAddr::new(0xffff800008000000);
+        assert_eq!(va_indices(base_va), (256, 0, 64, 0));
         assert_eq!(
             va_indices(recursive_table_addr(
                 RootPageTableType::Kernel,
-                0xffff800008000000,
+                base_va,
                 Level::Level0
             )),
             (511, 511, 511, 511)
@@ -707,7 +709,7 @@ mod tests {
         assert_eq!(
             va_indices(recursive_table_addr(
                 RootPageTableType::Kernel,
-                0xffff800008000000,
+                base_va,
                 Level::Level1
             )),
             (511, 511, 511, 256)
@@ -715,7 +717,7 @@ mod tests {
         assert_eq!(
             va_indices(recursive_table_addr(
                 RootPageTableType::Kernel,
-                0xffff800008000000,
+                base_va,
                 Level::Level2
             )),
             (511, 511, 256, 0)
@@ -723,7 +725,7 @@ mod tests {
         assert_eq!(
             va_indices(recursive_table_addr(
                 RootPageTableType::Kernel,
-                0xffff800008000000,
+                base_va,
                 Level::Level3
             )),
             (511, 256, 0, 64)
@@ -731,7 +733,7 @@ mod tests {
         assert_eq!(
             va_indices(recursive_table_addr(
                 RootPageTableType::Kernel,
-                0xffff800008000000,
+                base_va,
                 Level::Level3
             )),
             (511, 256, 0, 64)
